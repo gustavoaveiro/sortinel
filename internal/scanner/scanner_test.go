@@ -86,6 +86,35 @@ func TestWalk_SkipsSymlinksWithoutFollowing(t *testing.T) {
 	}
 }
 
+func TestCount_FilesAndSymlinkCountSeparately(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("symlink creation requires elevated privileges on windows")
+	}
+
+	root := t.TempDir()
+	mustWriteFile(t, filepath.Join(root, "a.txt"), "12345")      // 5 bytes
+	mustWriteFile(t, filepath.Join(root, "b.txt"), "1234567890") // 10 bytes
+	if err := os.Symlink(filepath.Join(root, "a.txt"), filepath.Join(root, "link.txt")); err != nil {
+		t.Fatalf("Symlink: %v", err)
+	}
+
+	files, totalBytes := Count(root)
+
+	if files != 3 { // 2 regular files + 1 symlink entry
+		t.Errorf("files = %d, want 3", files)
+	}
+	if totalBytes != 15 { // symlink doesn't contribute its own size
+		t.Errorf("totalBytes = %d, want 15", totalBytes)
+	}
+}
+
+func TestCount_EmptyDirectory(t *testing.T) {
+	files, totalBytes := Count(t.TempDir())
+	if files != 0 || totalBytes != 0 {
+		t.Errorf("Count() = (%d, %d), want (0, 0)", files, totalBytes)
+	}
+}
+
 func TestWalk_EmptyDirectoryProducesNoEntries(t *testing.T) {
 	root := t.TempDir()
 	entries := drain(t, root)

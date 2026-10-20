@@ -3,12 +3,37 @@ package app
 import (
 	"os"
 	"path/filepath"
+	"sync"
 	"testing"
 
 	"github.com/xuri/excelize/v2"
 
 	"github.com/gustavoaveiro/sortinel/internal/model"
 )
+
+// fakeProgressSink records calls made to it for assertions. It must be
+// concurrency-safe: Run's copier workers call FileDone from multiple
+// goroutines.
+type fakeProgressSink struct {
+	mu         sync.Mutex
+	totalFiles int
+	totalBytes int64
+	fileDones  int
+	bytesDone  int64
+}
+
+func (f *fakeProgressSink) SetTotal(files int, bytes int64) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.totalFiles, f.totalBytes = files, bytes
+}
+
+func (f *fakeProgressSink) FileDone(size int64) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.fileDones++
+	f.bytesDone += size
+}
 
 func writeFile(t *testing.T, path, content string) {
 	t.Helper()
@@ -151,5 +176,31 @@ func TestRun_DefaultWorkerCount(t *testing.T) {
 	}
 	if summary.Total != 1 {
 		t.Errorf("Total = %d, want 1", summary.Total)
+	}
+}
+
+func TestRun_ReportsProgressWhenSinkProvided(t *testing.T) {
+	in := t.TempDir()
+	out := t.TempDir()
+	writeFile(t, filepath.Join(in, "a.txt"), "hello")
+	writeFile(t, filepath.Join(in, "b.txt"), "world!")
+
+	sink := &fakeProgressSink{}
+	summary, err := Run(Config{InDir: in, OutDir: out, Progress: sink})
+	if err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+
+	if sink.totalFiles != 2 {
+		t.Errorf("totalFiles = %d, want 2", sink.totalFiles)
+	}
+	if sink.totalBytes != 11 { // "hello" (5) + "world!" (6)
+		t.Errorf("totalBytes = %d, want 11", sink.totalBytes)
+	}
+	if sink.fileDones != summary.Total {
+		t.Errorf("fileDones = %d, want %d", sink.fileDones, summary.Total)
+	}
+	if sink.bytesDone != sink.totalBytes {
+		t.Errorf("bytesDone = %d, want %d", sink.bytesDone, sink.totalBytes)
 	}
 }

@@ -1,11 +1,12 @@
 module github.com/gustavoaveiro/sortinel
 
-go 1.25.2
+go 1.26.0
 
 require (
 	fyne.io/fyne/v2 v2.8.2
 	github.com/gabriel-vasile/mimetype v1.4.16
 	github.com/xuri/excelize/v2 v2.11.0
+	golang.org/x/term v0.44.0
 )
 
 require (

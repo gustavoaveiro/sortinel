@@ -7,6 +7,7 @@ import (
 	"os/exec"
 	"runtime"
 	"strconv"
+	"time"
 
 	"fyne.io/fyne/v2"
 	"fyne.io/fyne/v2/app"
@@ -15,6 +16,7 @@ import (
 	"fyne.io/fyne/v2/widget"
 
 	coreapp "github.com/gustavoaveiro/sortinel/internal/app"
+	"github.com/gustavoaveiro/sortinel/internal/progress"
 )
 
 // Run opens the main window and blocks until the user closes it.
@@ -33,8 +35,8 @@ func Run() {
 	dryRunCheck := widget.NewCheck("Dry run (classify only, don't copy)", nil)
 
 	status := widget.NewLabel("")
-	progress := widget.NewProgressBarInfinite()
-	progress.Hide()
+	progressBar := widget.NewProgressBar()
+	progressBar.Hide()
 
 	openReportBtn := widget.NewButton("Open report", nil)
 	openReportBtn.Disable()
@@ -58,29 +60,52 @@ func Run() {
 			return
 		}
 
+		tracker := progress.NewTracker()
 		cfg := coreapp.Config{
-			InDir:   inEntry.Text,
-			OutDir:  outEntry.Text,
-			Workers: workers,
-			DryRun:  dryRunCheck.Checked,
+			InDir:    inEntry.Text,
+			OutDir:   outEntry.Text,
+			Workers:  workers,
+			DryRun:   dryRunCheck.Checked,
+			Progress: tracker,
 		}
 
 		runBtn.Disable()
 		openReportBtn.Disable()
-		status.SetText("Running…")
-		progress.Show()
+		status.SetText("Scanning…")
+		progressBar.SetValue(0)
+		progressBar.Show()
+
+		runDone := make(chan struct{})
+		go func() {
+			ticker := time.NewTicker(250 * time.Millisecond)
+			defer ticker.Stop()
+			for {
+				select {
+				case <-runDone:
+					return
+				case <-ticker.C:
+					snap := tracker.Snapshot()
+					fyne.Do(func() {
+						progressBar.SetValue(snap.Percent())
+						status.SetText(progress.RenderLabel(snap))
+					})
+				}
+			}
+		}()
 
 		go func() {
 			summary, err := coreapp.Run(cfg)
+			close(runDone)
 
 			fyne.Do(func() {
-				progress.Hide()
 				runBtn.Enable()
 				if err != nil {
+					progressBar.Hide()
 					status.SetText("Failed: " + err.Error())
 					dialog.ShowError(err, w)
 					return
 				}
+				progressBar.SetValue(1)
 				status.SetText(fmt.Sprintf("Done: %d files processed. Report: %s", summary.Total, summary.ReportPath))
 				openReportBtn.OnTapped = func() { openInDefaultApp(summary.ReportPath) }
 				openReportBtn.Enable()
@@ -97,7 +122,7 @@ func Run() {
 		workersEntry,
 		dryRunCheck,
 		runBtn,
-		progress,
+		progressBar,
 		status,
 		openReportBtn,
 	)

@@ -41,6 +41,10 @@ backup_out/
   can't accidentally loop forever or copy things from outside the source
   tree.
 - **Parallel copying** with a configurable worker pool.
+- **Live progress with ETA.** A metadata-only pre-scan sizes up the whole
+  job first, then a progress bar (CLI) or progress widget (GUI) tracks
+  bytes/files done and an estimated time to completion based on observed
+  throughput.
 - **One spreadsheet report per run** (`.xlsx`, opens natively in Excel,
   Google Sheets and LibreOffice) with one row per source file: where it
   came from, where it went, its detected type, its status, and — for

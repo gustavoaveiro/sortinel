@@ -31,5 +31,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Release automation: pushing a `v*` tag builds CLI binaries for
   linux/darwin (amd64+arm64) and windows/amd64 via GoReleaser and publishes
   them as a GitHub Release with checksums and auto-generated notes.
+- Live progress reporting with ETA: a fast metadata-only pre-scan sizes up
+  the job, then the CLI renders a `\r`-updated progress bar (only when
+  stderr is a terminal) and the GUI drives a determinate progress widget,
+  both showing files/bytes done, throughput, and estimated time remaining.
+
+### Changed
+
+- Reduced I/O for the common case (no filename collision at the
+  destination): files are now hashed while they're copied, in a single
+  read-and-write pass, instead of being read once to hash and read again
+  to copy. Only files that collide with an existing destination name still
+  need the second read, since that path must fully hash the source before
+  it can tell a duplicate apart from an unrelated collision.
 
 [Unreleased]: https://github.com/gustavoaveiro/sortinel/commits/master

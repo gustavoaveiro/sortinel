@@ -43,6 +43,20 @@ func Walk(root string) <-chan Entry {
 	return out
 }
 
+// Count walks root and returns the number of entries found and the total
+// size of regular files among them. It's meant for a fast, metadata-only
+// pre-scan so callers (e.g. a progress reporter) know the total amount of
+// work before the real pass over the same tree begins.
+func Count(root string) (files int, totalBytes int64) {
+	for e := range Walk(root) {
+		files++
+		if e.Kind == KindFile {
+			totalBytes += e.Info.Size()
+		}
+	}
+	return files, totalBytes
+}
+
 // walkFS is the injectable core of Walk: fsys supplies directory entries,
 // while root is only used to reconstruct absolute paths for Entry.Path.
 // Separating it from Walk lets tests exercise fs.DirEntry failure modes

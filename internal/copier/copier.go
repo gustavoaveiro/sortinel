@@ -5,6 +5,8 @@ package copier
 
 import (
 	"bufio"
+	"crypto/sha256"
+	"encoding/hex"
 	"fmt"
 	"io"
 	"os"
@@ -14,8 +16,17 @@ import (
 
 	"github.com/gustavoaveiro/sortinel/internal/classifier"
 	"github.com/gustavoaveiro/sortinel/internal/model"
+	"github.com/gustavoaveiro/sortinel/internal/progress"
 	"github.com/gustavoaveiro/sortinel/internal/scanner"
 )
+
+// openSource opens path for reading. It's a package variable so tests can
+// substitute a reader that fails partway through - simulating a real I/O
+// error mid-read, which isn't practical to trigger deterministically
+// against an actual filesystem.
+var openSource = func(path string) (io.ReadCloser, error) {
+	return os.Open(path)
+}
 
 // Options configures a copier Run.
 type Options struct {
@@ -23,6 +34,8 @@ type Options struct {
 	Workers int
 	// DryRun classifies and hashes every file but never writes to OutDir.
 	DryRun bool
+	// Progress, if non-nil, is notified once per entry as it finishes.
+	Progress progress.Sink
 }
 
 // Run consumes entries until the channel is closed, processing them with a
@@ -41,7 +54,11 @@ func Run(entries <-chan scanner.Entry, opts Options) []model.Record {
 		go func() {
 			defer wg.Done()
 			for e := range entries {
-				results <- process(e, opts)
+				rec := process(e, opts)
+				if opts.Progress != nil {
+					opts.Progress.FileDone(rec.SizeBytes)
+				}
+				results <- rec
 			}
 		}()
 	}
@@ -77,7 +94,7 @@ func process(e scanner.Entry, opts Options) model.Record {
 
 	rec.SizeBytes = e.Info.Size()
 
-	src, err := os.Open(e.Path)
+	src, err := openSource(e.Path)
 	if err != nil {
 		rec.Status = model.StatusFailed
 		rec.Reason = fmt.Sprintf("open source: %v", err)
@@ -85,20 +102,61 @@ func process(e scanner.Entry, opts Options) model.Record {
 	}
 	defer src.Close()
 
-	if err := classifyAndHash(src, &rec); err != nil {
-		rec.Status = model.StatusFailed
-		rec.Reason = err.Error()
-		return rec
-	}
-
 	if opts.DryRun {
+		if err := classifyAndHash(src, &rec); err != nil {
+			rec.Status = model.StatusFailed
+			rec.Reason = err.Error()
+			return rec
+		}
 		rec.Status = model.StatusSuccess
 		rec.Reason = "dry run - not copied"
 		rec.DestPath = filepath.Join(opts.OutDir, string(rec.Category), rec.FileName)
 		return rec
 	}
 
-	place, err := resolvePlacement(opts.OutDir, rec.Category, rec.FileName, rec.SizeBytes, rec.SHA256)
+	br, err := peekAndClassify(src, &rec)
+	if err != nil {
+		rec.Status = model.StatusFailed
+		rec.Reason = err.Error()
+		return rec
+	}
+
+	// Common case: nothing is at the natural destination name yet, so
+	// there's no need to know the content hash before deciding where to
+	// write - copy and hash in a single pass over the source instead of
+	// reading it twice.
+	naturalDest := filepath.Join(opts.OutDir, string(rec.Category), rec.FileName)
+	_, statErr := os.Stat(naturalDest)
+	switch {
+	case os.IsNotExist(statErr):
+		hash, err := copyAndHash(br, naturalDest)
+		if err != nil {
+			rec.Status = model.StatusFailed
+			rec.Reason = fmt.Sprintf("copy: %v", err)
+			return rec
+		}
+		rec.SHA256 = hash
+		rec.DestPath = naturalDest
+		rec.Status = model.StatusSuccess
+		return rec
+	case statErr != nil:
+		rec.Status = model.StatusFailed
+		rec.Reason = fmt.Sprintf("resolve destination: %v", statErr)
+		return rec
+	}
+
+	// Something already exists at the natural name: the source must be
+	// fully hashed before we can tell a genuine duplicate apart from an
+	// unrelated collision, so this path does read the source twice.
+	hash, err := hashReader(br)
+	if err != nil {
+		rec.Status = model.StatusFailed
+		rec.Reason = fmt.Sprintf("hash: %v", err)
+		return rec
+	}
+	rec.SHA256 = hash
+
+	place, err := resolvePlacement(opts.OutDir, rec.Category, rec.FileName, rec.SizeBytes, hash)
 	if err != nil {
 		rec.Status = model.StatusFailed
 		rec.Reason = fmt.Sprintf("resolve destination: %v", err)
@@ -120,18 +178,30 @@ func process(e scanner.Entry, opts Options) model.Record {
 	return rec
 }
 
-// classifyAndHash reads r once, filling in the record's DetectedType,
-// Category and SHA256 fields.
-func classifyAndHash(r io.Reader, rec *model.Record) error {
+// peekAndClassify reads enough of r to classify the file (without
+// consuming those bytes from the returned reader) and fills in the
+// record's DetectedType and Category.
+func peekAndClassify(r io.Reader, rec *model.Record) (*bufio.Reader, error) {
 	br := bufio.NewReaderSize(r, 4096)
 	peeked, err := br.Peek(min(4096, int(rec.SizeBytes)))
 	if err != nil && err != io.EOF {
-		return fmt.Errorf("read header: %w", err)
+		return nil, fmt.Errorf("read header: %w", err)
 	}
 
 	mimeType, category := classifier.ClassifyBytes(peeked, rec.FileName)
 	rec.DetectedType = mimeType
 	rec.Category = category
+	return br, nil
+}
+
+// classifyAndHash reads r once, filling in the record's DetectedType,
+// Category and SHA256 fields, without writing anything (used for -dry-run,
+// where there's no destination to stream into).
+func classifyAndHash(r io.Reader, rec *model.Record) error {
+	br, err := peekAndClassify(r, rec)
+	if err != nil {
+		return err
+	}
 
 	hash, err := hashReader(br)
 	if err != nil {
@@ -139,6 +209,27 @@ func classifyAndHash(r io.Reader, rec *model.Record) error {
 	}
 	rec.SHA256 = hash
 	return nil
+}
+
+// copyAndHash streams r into a newly created file at dst (creating parent
+// category directories as needed), computing its SHA-256 in the same pass
+// rather than reading the source a second time.
+func copyAndHash(r io.Reader, dst string) (string, error) {
+	if err := os.MkdirAll(filepath.Dir(dst), 0o755); err != nil {
+		return "", fmt.Errorf("create category dir: %w", err)
+	}
+
+	out, err := os.Create(dst)
+	if err != nil {
+		return "", fmt.Errorf("create destination: %w", err)
+	}
+	defer out.Close()
+
+	h := sha256.New()
+	if _, err := io.Copy(io.MultiWriter(out, h), r); err != nil {
+		return "", fmt.Errorf("write destination: %w", err)
+	}
+	return hex.EncodeToString(h.Sum(nil)), out.Close()
 }
 
 func copyFile(src, dst string) error {

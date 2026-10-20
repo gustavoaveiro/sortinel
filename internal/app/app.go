@@ -10,6 +10,7 @@ import (
 
 	"github.com/gustavoaveiro/sortinel/internal/copier"
 	"github.com/gustavoaveiro/sortinel/internal/model"
+	"github.com/gustavoaveiro/sortinel/internal/progress"
 	"github.com/gustavoaveiro/sortinel/internal/report"
 	"github.com/gustavoaveiro/sortinel/internal/scanner"
 )
@@ -25,6 +26,9 @@ type Config struct {
 	// ReportPath is where the .xlsx report is written. If empty, a
 	// timestamped file is created inside OutDir.
 	ReportPath string
+	// Progress, if non-nil, receives a SetTotal call after a metadata-only
+	// pre-scan of InDir, then a FileDone call per entry as work proceeds.
+	Progress progress.Sink
 }
 
 // Summary is returned after a run completes.
@@ -57,11 +61,17 @@ func Run(cfg Config) (Summary, error) {
 		workers = 4
 	}
 
+	if cfg.Progress != nil {
+		files, bytes := scanner.Count(cfg.InDir)
+		cfg.Progress.SetTotal(files, bytes)
+	}
+
 	entries := scanner.Walk(cfg.InDir)
 	records := copier.Run(entries, copier.Options{
-		OutDir:  cfg.OutDir,
-		Workers: workers,
-		DryRun:  cfg.DryRun,
+		OutDir:   cfg.OutDir,
+		Workers:  workers,
+		DryRun:   cfg.DryRun,
+		Progress: cfg.Progress,
 	})
 
 	reportPath := cfg.ReportPath
