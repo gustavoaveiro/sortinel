@@ -13,7 +13,9 @@ import (
 	"github.com/gustavoaveiro/sortinel/internal/model"
 )
 
-const version = "0.1.0"
+// version is set at build time via -ldflags "-X main.version=...";
+// goreleaser injects the release tag when publishing.
+var version = "dev"
 
 func main() {
 	var (

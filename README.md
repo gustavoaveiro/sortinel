@@ -51,6 +51,12 @@ backup_out/
 
 ## Installation
 
+Download a prebuilt binary for Linux, macOS or Windows from the
+[Releases page](https://github.com/gustavoaveiro/sortinel/releases) —
+each release has a `.tar.gz`/`.zip` per OS/arch plus a `checksums.txt`.
+
+Or, with Go installed:
+
 ```sh
 go install github.com/gustavoaveiro/sortinel/cmd/sortinel@latest
 ```

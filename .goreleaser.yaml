@@ -1,0 +1,61 @@
+version: 2
+
+project_name: sortinel
+
+before:
+  hooks:
+    - go mod tidy
+
+builds:
+  - id: sortinel
+    main: ./cmd/sortinel
+    binary: sortinel
+    env:
+      - CGO_ENABLED=0
+    goos:
+      - linux
+      - darwin
+      - windows
+    goarch:
+      - amd64
+      - arm64
+    ignore:
+      - goos: windows
+        goarch: arm64
+    ldflags:
+      - -s -w -X main.version={{ .Version }}
+
+archives:
+  - id: sortinel
+    ids: [sortinel]
+    name_template: >-
+      {{ .ProjectName }}_{{ .Version }}_{{ .Os }}_{{ .Arch }}
+    formats: [tar.gz]
+    format_overrides:
+      - goos: windows
+        formats: [zip]
+    files:
+      - LICENSE
+      - README.md
+      - CHANGELOG.md
+
+checksum:
+  name_template: "checksums.txt"
+
+changelog:
+  use: github
+  sort: asc
+  filters:
+    exclude:
+      - "^docs:"
+      - "^test:"
+      - "^ci:"
+
+release:
+  github:
+    owner: gustavoaveiro
+    name: sortinel
+  footer: >-
+    Binaries here are the **CLI only** (CGO-free, cross-compiled). The
+    desktop GUI isn't published as a prebuilt binary yet - see the README
+    for how to build it yourself with `-tags gui`.
