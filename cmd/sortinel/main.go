@@ -28,6 +28,8 @@ func main() {
 		workers    = flag.Int("workers", runtime.NumCPU(), "number of concurrent copy workers")
 		reportPath = flag.String("report", "", "path for the .xlsx report (default: <out>/backup_report_<timestamp>.xlsx)")
 		dryRun     = flag.Bool("dry-run", false, "scan and classify files without copying them")
+		exclude    = flag.String("exclude", "", "comma-separated glob patterns (matched against file/directory names) to skip, e.g. \"*.tmp,.git\"")
+		noDefaults = flag.Bool("no-default-excludes", false, "disable the built-in excludes (.git, node_modules, __pycache__, *.tmp, etc.)")
 		useGUI     = flag.Bool("gui", false, "launch the graphical interface instead of running from flags")
 		showVer    = flag.Bool("version", false, "print the version and exit")
 	)
@@ -53,12 +55,14 @@ func main() {
 	stopRender, renderDone := startProgressRendering(tracker)
 
 	summary, err := app.Run(app.Config{
-		InDir:      *in,
-		OutDir:     *out,
-		Workers:    *workers,
-		DryRun:     *dryRun,
-		ReportPath: *reportPath,
-		Progress:   tracker,
+		InDir:             *in,
+		OutDir:            *out,
+		Workers:           *workers,
+		DryRun:            *dryRun,
+		ReportPath:        *reportPath,
+		Progress:          tracker,
+		Excludes:          app.ParseExcludePatterns(*exclude),
+		NoDefaultExcludes: *noDefaults,
 	})
 
 	close(stopRender)
@@ -72,7 +76,7 @@ func main() {
 	fmt.Printf("Processed %d files\n", summary.Total)
 	for _, status := range []model.Status{
 		model.StatusSuccess, model.StatusRenamed, model.StatusAlreadyBackedUp,
-		model.StatusSkippedSymlink, model.StatusFailed,
+		model.StatusSkippedSymlink, model.StatusExcluded, model.StatusFailed,
 	} {
 		if n := summary.Counts[status]; n > 0 {
 			fmt.Printf("  %-22s %d\n", status, n)

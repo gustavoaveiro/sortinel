@@ -34,6 +34,11 @@ func Run() {
 
 	dryRunCheck := widget.NewCheck("Dry run (classify only, don't copy)", nil)
 
+	excludeEntry := widget.NewEntry()
+	excludeEntry.SetPlaceHolder("Extra patterns to skip, comma-separated (e.g. *.crypt14,*.ldb)")
+	useDefaultExcludesCheck := widget.NewCheck("Skip common noise (.git, node_modules, __pycache__, *.tmp, ...)", nil)
+	useDefaultExcludesCheck.SetChecked(true)
+
 	status := widget.NewLabel("")
 	progressBar := widget.NewProgressBar()
 	progressBar.Hide()
@@ -62,11 +67,13 @@ func Run() {
 
 		tracker := progress.NewTracker()
 		cfg := coreapp.Config{
-			InDir:    inEntry.Text,
-			OutDir:   outEntry.Text,
-			Workers:  workers,
-			DryRun:   dryRunCheck.Checked,
-			Progress: tracker,
+			InDir:             inEntry.Text,
+			OutDir:            outEntry.Text,
+			Workers:           workers,
+			DryRun:            dryRunCheck.Checked,
+			Progress:          tracker,
+			Excludes:          coreapp.ParseExcludePatterns(excludeEntry.Text),
+			NoDefaultExcludes: !useDefaultExcludesCheck.Checked,
 		}
 
 		runBtn.Disable()
@@ -121,6 +128,8 @@ func Run() {
 		widget.NewLabel("Worker count"),
 		workersEntry,
 		dryRunCheck,
+		useDefaultExcludesCheck,
+		excludeEntry,
 		runBtn,
 		progressBar,
 		status,

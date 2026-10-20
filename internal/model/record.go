@@ -13,6 +13,7 @@ const (
 	StatusAlreadyBackedUp Status = "Already Backed Up"
 	StatusFailed          Status = "Failed"
 	StatusSkippedSymlink  Status = "Skipped - Symlink"
+	StatusExcluded        Status = "Skipped - Excluded"
 )
 
 // Category is a top-level bucket in the output directory.

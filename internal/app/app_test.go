@@ -204,3 +204,87 @@ func TestRun_ReportsProgressWhenSinkProvided(t *testing.T) {
 		t.Errorf("bytesDone = %d, want %d", sink.bytesDone, sink.totalBytes)
 	}
 }
+
+func TestRun_DefaultExcludesPruneNoiseDirectories(t *testing.T) {
+	in := t.TempDir()
+	out := t.TempDir()
+	writeFile(t, filepath.Join(in, "keep.txt"), "keep")
+	writeFile(t, filepath.Join(in, "node_modules", "pkg", "index.js"), "noise")
+
+	summary, err := Run(Config{InDir: in, OutDir: out})
+	if err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	if summary.Total != 1 {
+		t.Errorf("Total = %d, want 1 (node_modules pruned by default)", summary.Total)
+	}
+}
+
+func TestRun_NoDefaultExcludesIncludesNoiseDirectories(t *testing.T) {
+	in := t.TempDir()
+	out := t.TempDir()
+	writeFile(t, filepath.Join(in, "keep.txt"), "keep")
+	writeFile(t, filepath.Join(in, "node_modules", "pkg", "index.js"), "noise")
+
+	summary, err := Run(Config{InDir: in, OutDir: out, NoDefaultExcludes: true})
+	if err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	if summary.Total != 2 {
+		t.Errorf("Total = %d, want 2 (defaults disabled)", summary.Total)
+	}
+}
+
+func TestRun_CustomExcludesAreAppliedOnTopOfDefaults(t *testing.T) {
+	in := t.TempDir()
+	out := t.TempDir()
+	writeFile(t, filepath.Join(in, "keep.txt"), "keep")
+	writeFile(t, filepath.Join(in, "chat.crypt14"), "app-internal junk")
+
+	summary, err := Run(Config{InDir: in, OutDir: out, Excludes: []string{"*.crypt14"}})
+	if err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	if summary.Counts[model.StatusExcluded] != 1 {
+		t.Errorf("Excluded count = %d, want 1", summary.Counts[model.StatusExcluded])
+	}
+	if summary.Counts[model.StatusSuccess] != 1 {
+		t.Errorf("Success count = %d, want 1", summary.Counts[model.StatusSuccess])
+	}
+}
+
+func TestRun_InvalidExcludePatternIsRejected(t *testing.T) {
+	in := t.TempDir()
+	writeFile(t, filepath.Join(in, "keep.txt"), "keep")
+
+	_, err := Run(Config{InDir: in, OutDir: t.TempDir(), Excludes: []string{"["}})
+	if err == nil {
+		t.Fatal("expected an error for a malformed exclude pattern, got nil")
+	}
+}
+
+func TestParseExcludePatterns(t *testing.T) {
+	tests := []struct {
+		in   string
+		want []string
+	}{
+		{"", nil},
+		{"*.tmp", []string{"*.tmp"}},
+		{"*.tmp,.git", []string{"*.tmp", ".git"}},
+		{" *.tmp , .git ,", []string{"*.tmp", ".git"}},
+		{",,", nil},
+	}
+	for _, tc := range tests {
+		got := ParseExcludePatterns(tc.in)
+		if len(got) != len(tc.want) {
+			t.Errorf("ParseExcludePatterns(%q) = %v, want %v", tc.in, got, tc.want)
+			continue
+		}
+		for i := range got {
+			if got[i] != tc.want[i] {
+				t.Errorf("ParseExcludePatterns(%q) = %v, want %v", tc.in, got, tc.want)
+				break
+			}
+		}
+	}
+}

@@ -11,10 +11,10 @@ import (
 	"testing"
 )
 
-func drain(t *testing.T, root string) []Entry {
+func drain(t *testing.T, root string, excludes []string) []Entry {
 	t.Helper()
 	var entries []Entry
-	for e := range Walk(root) {
+	for e := range Walk(root, excludes) {
 		entries = append(entries, e)
 	}
 	sort.Slice(entries, func(i, j int) bool { return entries[i].Path < entries[j].Path })
@@ -27,7 +27,7 @@ func TestWalk_FindsNestedRegularFiles(t *testing.T) {
 	mustMkdir(t, filepath.Join(root, "sub", "deeper"))
 	mustWriteFile(t, filepath.Join(root, "sub", "deeper", "nested.txt"), "nested")
 
-	entries := drain(t, root)
+	entries := drain(t, root, nil)
 
 	if len(entries) != 2 {
 		t.Fatalf("got %d entries, want 2: %+v", len(entries), entries)
@@ -65,7 +65,7 @@ func TestWalk_SkipsSymlinksWithoutFollowing(t *testing.T) {
 		t.Fatalf("Symlink dir: %v", err)
 	}
 
-	entries := drain(t, root)
+	entries := drain(t, root, nil)
 
 	var files, symlinks int
 	for _, e := range entries {
@@ -98,7 +98,7 @@ func TestCount_FilesAndSymlinkCountSeparately(t *testing.T) {
 		t.Fatalf("Symlink: %v", err)
 	}
 
-	files, totalBytes := Count(root)
+	files, totalBytes := Count(root, nil)
 
 	if files != 3 { // 2 regular files + 1 symlink entry
 		t.Errorf("files = %d, want 3", files)
@@ -108,16 +108,111 @@ func TestCount_FilesAndSymlinkCountSeparately(t *testing.T) {
 	}
 }
 
+func TestCount_ExcludedFilesCountedButNotSized(t *testing.T) {
+	root := t.TempDir()
+	mustWriteFile(t, filepath.Join(root, "keep.txt"), "12345") // 5 bytes
+	mustWriteFile(t, filepath.Join(root, "noisy.tmp"), "1234567890123456789012345")
+
+	files, totalBytes := Count(root, []string{"*.tmp"})
+
+	if files != 2 { // the excluded file is still an entry
+		t.Errorf("files = %d, want 2", files)
+	}
+	if totalBytes != 5 { // but its size isn't counted as work to do
+		t.Errorf("totalBytes = %d, want 5", totalBytes)
+	}
+}
+
 func TestCount_EmptyDirectory(t *testing.T) {
-	files, totalBytes := Count(t.TempDir())
+	files, totalBytes := Count(t.TempDir(), nil)
 	if files != 0 || totalBytes != 0 {
 		t.Errorf("Count() = (%d, %d), want (0, 0)", files, totalBytes)
 	}
 }
 
+func TestWalk_ExcludedDirectoryIsPrunedEntirely(t *testing.T) {
+	root := t.TempDir()
+	mustWriteFile(t, filepath.Join(root, "keep.txt"), "keep")
+	mustMkdir(t, filepath.Join(root, "node_modules", "pkg"))
+	mustWriteFile(t, filepath.Join(root, "node_modules", "pkg", "index.js"), "noise")
+
+	entries := drain(t, root, []string{"node_modules"})
+
+	if len(entries) != 1 {
+		t.Fatalf("got %d entries, want 1 (node_modules pruned): %+v", len(entries), entries)
+	}
+	if filepath.Base(entries[0].Path) != "keep.txt" {
+		t.Errorf("entry = %q, want keep.txt", entries[0].Path)
+	}
+}
+
+func TestWalk_ExcludedFileReportsMatchedPattern(t *testing.T) {
+	root := t.TempDir()
+	mustWriteFile(t, filepath.Join(root, "keep.txt"), "keep")
+	mustWriteFile(t, filepath.Join(root, "chat.crypt14"), "encrypted blob")
+
+	entries := drain(t, root, []string{"*.crypt14"})
+
+	if len(entries) != 2 {
+		t.Fatalf("got %d entries, want 2: %+v", len(entries), entries)
+	}
+	for _, e := range entries {
+		if filepath.Base(e.Path) == "chat.crypt14" {
+			if e.Kind != KindExcluded {
+				t.Errorf("chat.crypt14 kind = %v, want KindExcluded", e.Kind)
+			}
+			if e.MatchedPattern != "*.crypt14" {
+				t.Errorf("MatchedPattern = %q, want %q", e.MatchedPattern, "*.crypt14")
+			}
+		} else if e.Kind != KindFile {
+			t.Errorf("keep.txt kind = %v, want KindFile", e.Kind)
+		}
+	}
+}
+
+func TestWalk_NoExcludesMatchesEverything(t *testing.T) {
+	root := t.TempDir()
+	mustWriteFile(t, filepath.Join(root, "a.txt"), "a")
+	mustWriteFile(t, filepath.Join(root, "b.txt"), "b")
+
+	entries := drain(t, root, []string{"*.doesnotmatch"})
+	if len(entries) != 2 {
+		t.Errorf("got %d entries, want 2 (no pattern matched)", len(entries))
+	}
+}
+
+func TestValidatePatterns(t *testing.T) {
+	if err := ValidatePatterns([]string{"*.txt", "node_modules"}); err != nil {
+		t.Errorf("ValidatePatterns with valid patterns: %v", err)
+	}
+	if err := ValidatePatterns(nil); err != nil {
+		t.Errorf("ValidatePatterns(nil): %v", err)
+	}
+	if err := ValidatePatterns([]string{"["}); err == nil {
+		t.Error("ValidatePatterns with a malformed pattern: expected an error, got nil")
+	}
+}
+
+func TestMatchingPattern(t *testing.T) {
+	if got := matchingPattern("notes.txt", []string{"*.pdf", "*.txt"}); got != "*.txt" {
+		t.Errorf("matchingPattern = %q, want %q", got, "*.txt")
+	}
+	if got := matchingPattern("notes.txt", []string{"*.pdf"}); got != "" {
+		t.Errorf("matchingPattern = %q, want empty", got)
+	}
+	if got := matchingPattern("notes.txt", nil); got != "" {
+		t.Errorf("matchingPattern = %q, want empty", got)
+	}
+	// A malformed pattern is treated as a non-match rather than panicking;
+	// ValidatePatterns is what's responsible for rejecting these upfront.
+	if got := matchingPattern("notes.txt", []string{"["}); got != "" {
+		t.Errorf("matchingPattern with a malformed pattern = %q, want empty", got)
+	}
+}
+
 func TestWalk_EmptyDirectoryProducesNoEntries(t *testing.T) {
 	root := t.TempDir()
-	entries := drain(t, root)
+	entries := drain(t, root, nil)
 	if len(entries) != 0 {
 		t.Errorf("got %d entries, want 0: %+v", len(entries), entries)
 	}
@@ -141,7 +236,7 @@ func TestWalk_UnreadableDirectoryProducesErrorEntry(t *testing.T) {
 	}
 	defer os.Chmod(blocked, 0o755)
 
-	entries := drain(t, root)
+	entries := drain(t, root, nil)
 
 	var sawError bool
 	for _, e := range entries {
@@ -167,7 +262,7 @@ func TestWalk_SkipsNonRegularFiles(t *testing.T) {
 		t.Fatalf("Mkfifo: %v", err)
 	}
 
-	entries := drain(t, root)
+	entries := drain(t, root, nil)
 
 	var files int
 	for _, e := range entries {
@@ -223,7 +318,7 @@ func TestWalkFS_DirEntryInfoErrorProducesErrorEntry(t *testing.T) {
 	out := make(chan Entry)
 	go func() {
 		defer close(out)
-		walkFS(fsys, root, out)
+		walkFS(fsys, root, out, nil)
 	}()
 
 	var entries []Entry

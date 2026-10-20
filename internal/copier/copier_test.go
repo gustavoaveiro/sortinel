@@ -188,6 +188,23 @@ func TestRun_SkippedSymlinkProducesSkippedRecord(t *testing.T) {
 	}
 }
 
+func TestRun_ExcludedEntryProducesExcludedRecord(t *testing.T) {
+	entries := make(chan scanner.Entry, 1)
+	entries <- scanner.Entry{Path: "/some/chat.crypt14", Kind: scanner.KindExcluded, MatchedPattern: "*.crypt14"}
+	close(entries)
+
+	records := Run(entries, Options{OutDir: t.TempDir(), Workers: 1})
+	if len(records) != 1 {
+		t.Fatalf("got %d records, want 1", len(records))
+	}
+	if records[0].Status != model.StatusExcluded {
+		t.Errorf("status = %q, want %q", records[0].Status, model.StatusExcluded)
+	}
+	if records[0].Reason != `matched exclude pattern "*.crypt14"` {
+		t.Errorf("reason = %q", records[0].Reason)
+	}
+}
+
 func TestRun_ScanErrorEntryProducesFailedRecord(t *testing.T) {
 	entries := make(chan scanner.Entry, 1)
 	entries <- scanner.Entry{Path: "/no/such/path", Kind: scanner.KindError, Err: errors.New("permission denied")}

@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"time"
 
 	"github.com/gustavoaveiro/sortinel/internal/copier"
@@ -29,6 +30,26 @@ type Config struct {
 	// Progress, if non-nil, receives a SetTotal call after a metadata-only
 	// pre-scan of InDir, then a FileDone call per entry as work proceeds.
 	Progress progress.Sink
+	// Excludes are additional glob patterns (matched against a file or
+	// directory's base name) to skip, on top of scanner.DefaultExcludes
+	// unless NoDefaultExcludes is set.
+	Excludes []string
+	// NoDefaultExcludes disables scanner.DefaultExcludes, using only
+	// Excludes.
+	NoDefaultExcludes bool
+}
+
+// ParseExcludePatterns splits a comma-separated list of glob patterns
+// (as taken from a CLI flag or GUI text field) into a slice, trimming
+// whitespace and dropping empty entries.
+func ParseExcludePatterns(s string) []string {
+	var patterns []string
+	for _, p := range strings.Split(s, ",") {
+		if p = strings.TrimSpace(p); p != "" {
+			patterns = append(patterns, p)
+		}
+	}
+	return patterns
 }
 
 // Summary is returned after a run completes.
@@ -61,12 +82,20 @@ func Run(cfg Config) (Summary, error) {
 		workers = 4
 	}
 
+	excludes := cfg.Excludes
+	if !cfg.NoDefaultExcludes {
+		excludes = append(append([]string{}, scanner.DefaultExcludes...), excludes...)
+	}
+	if err := scanner.ValidatePatterns(excludes); err != nil {
+		return Summary{}, err
+	}
+
 	if cfg.Progress != nil {
-		files, bytes := scanner.Count(cfg.InDir)
+		files, bytes := scanner.Count(cfg.InDir, excludes)
 		cfg.Progress.SetTotal(files, bytes)
 	}
 
-	entries := scanner.Walk(cfg.InDir)
+	entries := scanner.Walk(cfg.InDir, excludes)
 	records := copier.Run(entries, copier.Options{
 		OutDir:   cfg.OutDir,
 		Workers:  workers,

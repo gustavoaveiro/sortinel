@@ -35,6 +35,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   the job, then the CLI renders a `\r`-updated progress bar (only when
   stderr is a terminal) and the GUI drives a determinate progress widget,
   both showing files/bytes done, throughput, and estimated time remaining.
+- File/directory exclusion via `-exclude` (comma-separated glob patterns
+  matched against base names) and `-no-default-excludes`. A directory
+  match prunes the whole subtree without scanning it; a file match is
+  recorded in the report as `Skipped - Excluded` along with which pattern
+  matched. A built-in default list (`.git`, `node_modules`, `__pycache__`,
+  `*.tmp`, `.DS_Store`, etc.) is applied unless disabled.
 
 ### Changed
 

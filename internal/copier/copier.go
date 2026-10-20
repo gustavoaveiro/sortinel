@@ -86,6 +86,10 @@ func process(e scanner.Entry, opts Options) model.Record {
 		rec.Status = model.StatusSkippedSymlink
 		rec.Reason = "symbolic link - not followed"
 		return rec
+	case scanner.KindExcluded:
+		rec.Status = model.StatusExcluded
+		rec.Reason = fmt.Sprintf("matched exclude pattern %q", e.MatchedPattern)
+		return rec
 	case scanner.KindError:
 		rec.Status = model.StatusFailed
 		rec.Reason = e.Err.Error()

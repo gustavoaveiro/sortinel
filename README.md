@@ -1,5 +1,10 @@
 # Sortinel
 
+[![test](https://github.com/gustavoaveiro/sortinel/actions/workflows/test.yml/badge.svg)](https://github.com/gustavoaveiro/sortinel/actions/workflows/test.yml)
+[![release](https://img.shields.io/github/v/release/gustavoaveiro/sortinel)](https://github.com/gustavoaveiro/sortinel/releases)
+[![Go Reference](https://pkg.go.dev/badge/github.com/gustavoaveiro/sortinel.svg)](https://pkg.go.dev/github.com/gustavoaveiro/sortinel)
+[![license](https://img.shields.io/github/license/gustavoaveiro/sortinel)](LICENSE)
+
 **Sortinel** deep-scans a directory tree, identifies every file by its actual
 content (not its extension), and copies it into a tidy, type-organized
 backup — producing a spreadsheet report of exactly what happened to every
@@ -40,6 +45,10 @@ backup_out/
 - **Symlinks are never followed** — they're reported as skipped, so you
   can't accidentally loop forever or copy things from outside the source
   tree.
+- **Excludes noise by default.** `.git`, `node_modules`, `__pycache__` and
+  similar build/VCS directories are pruned entirely (never scanned), and
+  junk files (`*.tmp`, `.DS_Store`, `Thumbs.db`, ...) are skipped - both
+  configurable, see [Excluding files](#excluding-files).
 - **Parallel copying** with a configurable worker pool.
 - **Live progress with ETA.** A metadata-only pre-scan sizes up the whole
   job first, then a progress bar (CLI) or progress widget (GUI) tracks
@@ -86,10 +95,14 @@ sortinel -in /path/to/messy/folder -out /path/to/organized/backup
 Usage of sortinel:
   -dry-run
         scan and classify files without copying them
+  -exclude string
+        comma-separated glob patterns (matched against file/directory names) to skip, e.g. "*.tmp,.git"
   -gui
         launch the graphical interface instead of running from flags
   -in string
         source directory to scan (required unless -gui)
+  -no-default-excludes
+        disable the built-in excludes (.git, node_modules, __pycache__, *.tmp, etc.)
   -out string
         destination directory for the organized backup (required unless -gui)
   -report string
@@ -122,6 +135,36 @@ verified by checksum) are skipped automatically:
 sortinel -in ~/old-hard-drive -out ~/sorted-backup
 ```
 
+## Excluding files
+
+Every run skips a built-in list of common noise by default
+(`scanner.DefaultExcludes`):
+
+```
+.git  .svn  .hg  node_modules
+__pycache__  .pytest_cache  .mypy_cache  .tox
+.DS_Store  Thumbs.db  desktop.ini
+*.tmp  *.temp  *.part  *.crdownload
+```
+
+A pattern matching a **directory's** name prunes that whole subtree (it's
+never scanned at all); a pattern matching a **file's** name skips just that
+file, recorded in the report as `Skipped - Excluded` with which pattern
+matched. Patterns are matched against the file/directory's base name only
+(e.g. `*.tmp`, not a full path like `foo/*.tmp`).
+
+Add your own patterns on top of the defaults:
+
+```sh
+sortinel -in ~/phone-backup -out ~/sorted -exclude "*.crypt14,*.ldb,*.db"
+```
+
+Or turn the built-in defaults off entirely and use only your own list:
+
+```sh
+sortinel -in ~/data -out ~/sorted -no-default-excludes -exclude "*.bak"
+```
+
 ## The report
 
 Every run produces an `.xlsx` file with one row per file encountered in the
@@ -134,7 +177,7 @@ source tree:
 | File Name | Original file name |
 | Detected Type | MIME type detected from content |
 | Category | The folder it was sorted into |
-| Status | `Success`, `Success (Renamed)`, `Already Backed Up`, `Skipped - Symlink`, or `Failed` |
+| Status | `Success`, `Success (Renamed)`, `Already Backed Up`, `Skipped - Symlink`, `Skipped - Excluded`, or `Failed` |
 | Reason | Why, for anything other than a plain `Success` |
 | Size (bytes) | File size |
 | SHA-256 | Content checksum |
@@ -181,10 +224,16 @@ extension into `Code/` vs `Documents/Text/`.
 ## Development
 
 ```sh
-go test ./...          # run the test suite
+go test ./internal/...  # run the test suite (100% coverage, enforced in CI)
 go build ./cmd/sortinel # build the CLI
 gofmt -l .              # check formatting
 ```
+
+`./...` isn't used above on purpose: it would also try to build/test the
+`gui` package, which needs the system libraries from
+[Building the GUI](#building-the-gui) to even compile.
+
+See [CHANGELOG.md](CHANGELOG.md) for release history.
 
 ## License
 
