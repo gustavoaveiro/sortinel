@@ -5,7 +5,6 @@ package copier
 
 import (
 	"bufio"
-	"bytes"
 	"fmt"
 	"io"
 	"os"
@@ -78,7 +77,15 @@ func process(e scanner.Entry, opts Options) model.Record {
 
 	rec.SizeBytes = e.Info.Size()
 
-	if err := classifyAndHash(e.Path, &rec); err != nil {
+	src, err := os.Open(e.Path)
+	if err != nil {
+		rec.Status = model.StatusFailed
+		rec.Reason = fmt.Sprintf("open source: %v", err)
+		return rec
+	}
+	defer src.Close()
+
+	if err := classifyAndHash(src, &rec); err != nil {
 		rec.Status = model.StatusFailed
 		rec.Reason = err.Error()
 		return rec
@@ -113,25 +120,16 @@ func process(e scanner.Entry, opts Options) model.Record {
 	return rec
 }
 
-// classifyAndHash reads src once, filling in the record's DetectedType,
+// classifyAndHash reads r once, filling in the record's DetectedType,
 // Category and SHA256 fields.
-func classifyAndHash(path string, rec *model.Record) error {
-	f, err := os.Open(path)
-	if err != nil {
-		return fmt.Errorf("open source: %w", err)
-	}
-	defer f.Close()
-
-	br := bufio.NewReaderSize(f, 4096)
+func classifyAndHash(r io.Reader, rec *model.Record) error {
+	br := bufio.NewReaderSize(r, 4096)
 	peeked, err := br.Peek(min(4096, int(rec.SizeBytes)))
 	if err != nil && err != io.EOF {
 		return fmt.Errorf("read header: %w", err)
 	}
 
-	mimeType, category, err := classifier.Classify(bytes.NewReader(peeked), rec.FileName)
-	if err != nil {
-		return fmt.Errorf("classify: %w", err)
-	}
+	mimeType, category := classifier.ClassifyBytes(peeked, rec.FileName)
 	rec.DetectedType = mimeType
 	rec.Category = category
 

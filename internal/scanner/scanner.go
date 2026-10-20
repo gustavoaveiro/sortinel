@@ -5,6 +5,7 @@ package scanner
 
 import (
 	"io/fs"
+	"os"
 	"path/filepath"
 )
 
@@ -36,36 +37,46 @@ func Walk(root string) <-chan Entry {
 
 	go func() {
 		defer close(out)
-
-		_ = filepath.WalkDir(root, func(path string, d fs.DirEntry, err error) error {
-			if err != nil {
-				out <- Entry{Path: path, Kind: KindError, Err: err}
-				return nil
-			}
-
-			if d.IsDir() {
-				return nil
-			}
-
-			info, infoErr := d.Info()
-			if infoErr != nil {
-				out <- Entry{Path: path, Kind: KindError, Err: infoErr}
-				return nil
-			}
-
-			if info.Mode()&fs.ModeSymlink != 0 {
-				out <- Entry{Path: path, Info: info, Kind: KindSkippedSymlink}
-				return nil
-			}
-
-			if !info.Mode().IsRegular() {
-				return nil
-			}
-
-			out <- Entry{Path: path, Info: info, Kind: KindFile}
-			return nil
-		})
+		walkFS(os.DirFS(root), root, out)
 	}()
 
 	return out
+}
+
+// walkFS is the injectable core of Walk: fsys supplies directory entries,
+// while root is only used to reconstruct absolute paths for Entry.Path.
+// Separating it from Walk lets tests exercise fs.DirEntry failure modes
+// that can't happen with the real OS filesystem but are part of the
+// io/fs.DirEntry contract.
+func walkFS(fsys fs.FS, root string, out chan<- Entry) {
+	_ = fs.WalkDir(fsys, ".", func(relPath string, d fs.DirEntry, err error) error {
+		path := filepath.Join(root, relPath)
+
+		if err != nil {
+			out <- Entry{Path: path, Kind: KindError, Err: err}
+			return nil
+		}
+
+		if d.IsDir() {
+			return nil
+		}
+
+		info, infoErr := d.Info()
+		if infoErr != nil {
+			out <- Entry{Path: path, Kind: KindError, Err: infoErr}
+			return nil
+		}
+
+		if info.Mode()&fs.ModeSymlink != 0 {
+			out <- Entry{Path: path, Info: info, Kind: KindSkippedSymlink}
+			return nil
+		}
+
+		if !info.Mode().IsRegular() {
+			return nil
+		}
+
+		out <- Entry{Path: path, Info: info, Kind: KindFile}
+		return nil
+	})
 }

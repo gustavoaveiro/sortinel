@@ -31,7 +31,16 @@ jobs:
         run: go vet ./cmd/... ./internal/...
 
       - name: test
-        run: go test ./internal/... -race -cover
+        run: go test ./internal/... -race -coverprofile=coverage.out -covermode=atomic
+
+      - name: enforce 100% test coverage
+        run: |
+          total=$(go tool cover -func=coverage.out | tail -1 | awk '{print $3}' | tr -d '%')
+          echo "Total coverage: ${total}%"
+          if [ "$total" != "100.0" ]; then
+            echo "::error::Coverage dropped below 100% (got ${total}%)"
+            exit 1
+          fi
 
   build-cli:
     name: build CLI (${{ matrix.goos }}/${{ matrix.goarch }})

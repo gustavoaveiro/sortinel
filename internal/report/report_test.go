@@ -1,6 +1,7 @@
 package report
 
 import (
+	"fmt"
 	"path/filepath"
 	"testing"
 	"time"
@@ -84,6 +85,78 @@ func TestWrite_InvalidPathFails(t *testing.T) {
 	err := Write(dir, sampleRecords())
 	if err == nil {
 		t.Fatal("expected an error when writing to a directory path, got nil")
+	}
+}
+
+// fakeExcelFile implements excelFile and fails exactly the one call named
+// by failOn, succeeding at everything else. It exists to exercise
+// writeWorkbook's error-propagation branches, which can't be triggered
+// through the real *excelize.File with the fixed, always-valid arguments
+// writeWorkbook passes it.
+type fakeExcelFile struct {
+	failOn string
+}
+
+func (f *fakeExcelFile) fail(method string) error {
+	if f.failOn == method {
+		return fmt.Errorf("simulated %s failure", method)
+	}
+	return nil
+}
+
+func (f *fakeExcelFile) SetSheetName(source, target string) error   { return f.fail("SetSheetName") }
+func (f *fakeExcelFile) SetCellStr(sheet, cell, value string) error { return f.fail("SetCellStr") }
+func (f *fakeExcelFile) SetCellValue(sheet, cell string, value interface{}) error {
+	return f.fail("SetCellValue")
+}
+func (f *fakeExcelFile) NewStyle(style *excelize.Style) (int, error) {
+	if err := f.fail("NewStyle"); err != nil {
+		return 0, err
+	}
+	return 1, nil
+}
+func (f *fakeExcelFile) SetCellStyle(sheet, topLeftCell, bottomRightCell string, styleID int) error {
+	return f.fail("SetCellStyle")
+}
+func (f *fakeExcelFile) AutoFilter(sheet, rangeRef string, opts []excelize.AutoFilterOptions) error {
+	return f.fail("AutoFilter")
+}
+func (f *fakeExcelFile) SaveAs(name string, opts ...excelize.Options) error { return f.fail("SaveAs") }
+func (f *fakeExcelFile) Close() error                                       { return nil }
+
+func TestWriteWorkbook_PropagatesEachUnderlyingError(t *testing.T) {
+	// One Failed-status record so the SetCellStyle (highlight) path runs too.
+	records := []model.Record{{Status: model.StatusFailed}}
+
+	for _, method := range []string{
+		"SetSheetName", "SetCellStr", "NewStyle", "SetCellValue", "SetCellStyle", "AutoFilter",
+	} {
+		t.Run(method, func(t *testing.T) {
+			err := writeWorkbook(&fakeExcelFile{failOn: method}, records)
+			if err == nil {
+				t.Fatalf("expected an error when %s fails, got nil", method)
+			}
+		})
+	}
+}
+
+func TestWriteWorkbook_SucceedsWhenNothingFails(t *testing.T) {
+	if err := writeWorkbook(&fakeExcelFile{}, sampleRecords()); err != nil {
+		t.Fatalf("writeWorkbook: %v", err)
+	}
+}
+
+func TestWriteFile_PropagatesWriteWorkbookError(t *testing.T) {
+	err := writeFile(&fakeExcelFile{failOn: "SetSheetName"}, "ignored.xlsx", nil)
+	if err == nil {
+		t.Fatal("expected an error, got nil")
+	}
+}
+
+func TestWriteFile_PropagatesSaveAsError(t *testing.T) {
+	err := writeFile(&fakeExcelFile{failOn: "SaveAs"}, "ignored.xlsx", nil)
+	if err == nil {
+		t.Fatal("expected an error, got nil")
 	}
 }
 

@@ -21,6 +21,14 @@ func Classify(r io.Reader, fileName string) (mimeType string, category model.Cat
 	return mt.String(), categoryFor(mt, fileName), nil
 }
 
+// ClassifyBytes is the error-free equivalent of Classify for callers that
+// already hold the file header in memory (mimetype.Detect never fails on a
+// byte slice).
+func ClassifyBytes(header []byte, fileName string) (mimeType string, category model.Category) {
+	mt := mimetype.Detect(header)
+	return mt.String(), categoryFor(mt, fileName)
+}
+
 func categoryFor(mt *mimetype.MIME, fileName string) model.Category {
 	for m := mt; m != nil; m = m.Parent() {
 		if cat, ok := byExactMIME[m.String()]; ok {

@@ -60,6 +60,16 @@ func TestClassify(t *testing.T) {
 	}
 }
 
+func TestClassifyBytes(t *testing.T) {
+	mimeType, category := ClassifyBytes([]byte("%PDF-1.4\nfake pdf\n"), "report.pdf")
+	if category != model.CategoryPDF {
+		t.Errorf("category = %q, want %q", category, model.CategoryPDF)
+	}
+	if mimeType == "" {
+		t.Error("expected a non-empty detected MIME type")
+	}
+}
+
 func TestClassify_UnknownBinaryFallsBackToOther(t *testing.T) {
 	// Bytes that don't match any known signature.
 	content := string([]byte{0x00, 0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07})

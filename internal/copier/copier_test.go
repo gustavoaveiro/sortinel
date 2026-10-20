@@ -374,16 +374,64 @@ func TestCopyFile_ReadingFromADirectoryFails(t *testing.T) {
 	}
 }
 
+func TestClassifyAndHash_PeekErrorPropagates(t *testing.T) {
+	rec := model.Record{SizeBytes: 10}
+	err := classifyAndHash(erroringReader{}, &rec)
+	if err == nil {
+		t.Fatal("expected an error, got nil")
+	}
+}
+
+// headerThenErrorReader serves a fixed header successfully, then fails on
+// every subsequent read - used to make Peek succeed while the later full
+// read (used for hashing) fails.
+type headerThenErrorReader struct {
+	header []byte
+	err    error
+}
+
+func (r *headerThenErrorReader) Read(p []byte) (int, error) {
+	if len(r.header) > 0 {
+		n := copy(p, r.header)
+		r.header = r.header[n:]
+		return n, nil
+	}
+	return 0, r.err
+}
+
+func TestClassifyAndHash_HashErrorAfterSuccessfulPeek(t *testing.T) {
+	header := make([]byte, 4096)
+	r := &headerThenErrorReader{header: header, err: errors.New("simulated read failure")}
+	rec := model.Record{SizeBytes: int64(len(header) + 10)}
+
+	err := classifyAndHash(r, &rec)
+	if err == nil {
+		t.Fatal("expected an error, got nil")
+	}
+}
+
 func TestClassifyAndHash_SourceBecameADirectory(t *testing.T) {
 	if runtime.GOOS == "windows" {
 		t.Skip("opening a directory as a file behaves differently on windows")
 	}
 
-	dir := t.TempDir()
-	rec := model.Record{SizeBytes: 10}
-	err := classifyAndHash(dir, &rec)
-	if err == nil {
-		t.Fatal("expected an error reading the header of a directory, got nil")
+	in := t.TempDir()
+	out := t.TempDir()
+	srcDir := filepath.Join(in, "imasrcdir")
+	if err := os.MkdirAll(srcDir, 0o755); err != nil {
+		t.Fatalf("MkdirAll: %v", err)
+	}
+
+	entries := make(chan scanner.Entry, 1)
+	entries <- fileEntry(t, srcDir)
+	close(entries)
+
+	records := Run(entries, Options{OutDir: out, Workers: 1})
+	if len(records) != 1 {
+		t.Fatalf("got %d records, want 1", len(records))
+	}
+	if records[0].Status != model.StatusFailed {
+		t.Errorf("status = %q, want Failed (reason: %s)", records[0].Status, records[0].Reason)
 	}
 }
 

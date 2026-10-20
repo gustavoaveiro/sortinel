@@ -17,12 +17,40 @@ var columns = []string{
 	"Category", "Status", "Reason", "Size (bytes)", "SHA-256", "Timestamp",
 }
 
+// excelFile is the subset of *excelize.File used to build the report. It
+// exists so tests can inject a fake that fails on demand: every call below
+// is made with fixed, valid arguments (a hardcoded sheet name, cell
+// coordinates computed from bounded loop indices, a fixed style), so none
+// of them can actually fail in production - the real library only returns
+// an error here in response to programmer mistakes, which this interface
+// lets tests simulate directly instead of leaving the check untested.
+type excelFile interface {
+	SetSheetName(source, target string) error
+	SetCellStr(sheet, cell, value string) error
+	SetCellValue(sheet, cell string, value interface{}) error
+	NewStyle(style *excelize.Style) (int, error)
+	SetCellStyle(sheet, topLeftCell, bottomRightCell string, styleID int) error
+	AutoFilter(sheet, rangeRef string, opts []excelize.AutoFilterOptions) error
+	SaveAs(name string, opts ...excelize.Options) error
+	Close() error
+}
+
 // Write renders records into a new .xlsx file at path, failing rows are
 // highlighted in red.
 func Write(path string, records []model.Record) error {
-	f := excelize.NewFile()
+	return writeFile(excelize.NewFile(), path, records)
+}
+
+func writeFile(f excelFile, path string, records []model.Record) error {
 	defer f.Close()
 
+	if err := writeWorkbook(f, records); err != nil {
+		return err
+	}
+	return f.SaveAs(path)
+}
+
+func writeWorkbook(f excelFile, records []model.Record) error {
 	if err := f.SetSheetName("Sheet1", sheetName); err != nil {
 		return err
 	}
@@ -63,11 +91,7 @@ func Write(path string, records []model.Record) error {
 		}
 	}
 
-	if err := f.AutoFilter(sheetName, fmt.Sprintf("A1:%s1", mustCol(len(columns))), nil); err != nil {
-		return err
-	}
-
-	return f.SaveAs(path)
+	return f.AutoFilter(sheetName, fmt.Sprintf("A1:%s1", mustCol(len(columns))), nil)
 }
 
 func mustCol(n int) string {

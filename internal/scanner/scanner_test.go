@@ -1,6 +1,8 @@
 package scanner
 
 import (
+	"errors"
+	"io/fs"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -146,6 +148,68 @@ func TestWalk_SkipsNonRegularFiles(t *testing.T) {
 	}
 	if files != 1 {
 		t.Errorf("files = %d, want 1 (fifo must be skipped): %+v", files, entries)
+	}
+}
+
+// infoFailFS wraps a real fs.FS and makes DirEntry.Info() fail for one
+// specific entry name. The io/fs.DirEntry contract allows Info() to fail
+// (e.g. for fs.FS implementations backed by something other than a local
+// disk), but the real OS-backed os.DirFS never actually triggers it - so
+// this fake is how walkFS's defensive handling for that case gets exercised.
+type infoFailFS struct {
+	fs.FS
+	failName string
+}
+
+func (f infoFailFS) ReadDir(name string) ([]fs.DirEntry, error) {
+	entries, err := fs.ReadDir(f.FS, name)
+	if err != nil {
+		return nil, err
+	}
+	out := make([]fs.DirEntry, len(entries))
+	for i, d := range entries {
+		if d.Name() == f.failName {
+			out[i] = infoFailDirEntry{d}
+		} else {
+			out[i] = d
+		}
+	}
+	return out, nil
+}
+
+type infoFailDirEntry struct {
+	fs.DirEntry
+}
+
+func (infoFailDirEntry) Info() (fs.FileInfo, error) {
+	return nil, errors.New("simulated Info() failure")
+}
+
+func TestWalkFS_DirEntryInfoErrorProducesErrorEntry(t *testing.T) {
+	root := t.TempDir()
+	mustWriteFile(t, filepath.Join(root, "bad.txt"), "content")
+
+	fsys := infoFailFS{FS: os.DirFS(root), failName: "bad.txt"}
+
+	out := make(chan Entry)
+	go func() {
+		defer close(out)
+		walkFS(fsys, root, out)
+	}()
+
+	var entries []Entry
+	for e := range out {
+		entries = append(entries, e)
+	}
+
+	if len(entries) != 1 {
+		t.Fatalf("got %d entries, want 1: %+v", len(entries), entries)
+	}
+	if entries[0].Kind != KindError {
+		t.Errorf("kind = %v, want KindError", entries[0].Kind)
+	}
+	if entries[0].Err == nil {
+		t.Error("expected a non-nil Err")
 	}
 }
 
