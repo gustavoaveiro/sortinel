@@ -46,6 +46,26 @@ func TestResolvePlacement_CollisionThenAlreadyBackedUp(t *testing.T) {
 	}
 }
 
+func TestResolvePlacement_DotfileCollisionPreservesName(t *testing.T) {
+	out := t.TempDir()
+	dir := filepath.Join(out, string(model.CategoryText))
+	writeFile(t, filepath.Join(dir, ".hidden"), "different content")
+
+	hash, size := hashFileContent(t, "target content")
+
+	place, err := resolvePlacement(out, model.CategoryText, ".hidden", size, hash)
+	if err != nil {
+		t.Fatalf("resolvePlacement: %v", err)
+	}
+	if place.status != model.StatusRenamed {
+		t.Errorf("status = %q, want Renamed", place.status)
+	}
+	want := filepath.Join(dir, ".hidden_1")
+	if place.path != want {
+		t.Errorf("path = %q, want %q (not _1.hidden)", place.path, want)
+	}
+}
+
 func TestResolvePlacement_StatErrorPropagates(t *testing.T) {
 	if runtime.GOOS == "windows" {
 		t.Skip("permission bits behave differently on windows")
